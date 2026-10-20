@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { Nav } from "@/components/navigation/nav";
+import { NowPlaying } from "@/components/player/now-playing";
 import { PlayerBar } from "@/components/player/player-bar";
 import { PlayerProvider } from "@/components/player/player-provider";
 import "./globals.css";
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             {children}
           </Suspense>
           <PlayerBar />
+          <NowPlaying />
         </PlayerProvider>
       </body>
     </html>

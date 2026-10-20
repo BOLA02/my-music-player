@@ -49,6 +49,8 @@ type PlayerState = {
   shuffle: boolean;
   repeat: RepeatMode;
   error: string | null;
+  nowPlayingOpen: boolean;
+  setNowPlayingOpen: (open: boolean) => void;
   addFiles: (files: File[]) => Promise<void>;
   removeTrack: (id: string) => void;
   play: (id: string, context?: string[]) => void;
@@ -92,6 +94,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [error, setError] = useState<string | null>(null);
+  const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
 
   const current = useMemo(
     () => tracks.find((t) => t.id === currentId) ?? null,
@@ -335,6 +338,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     shuffle,
     repeat,
     error,
+    nowPlayingOpen,
+    setNowPlayingOpen,
     addFiles,
     removeTrack,
     play: startTrack,
