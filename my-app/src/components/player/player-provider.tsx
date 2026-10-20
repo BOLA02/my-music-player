@@ -10,11 +10,37 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { filesToTracks } from "@/lib/audio";
-import type { RepeatMode, Track } from "@/types/music";
+import { isAudioFile, readTrack } from "@/lib/audio";
+import {
+  deleteStoredPlaylist,
+  deleteStoredTrack,
+  loadLibrary,
+  saveTrack,
+  savePlaylist,
+  type StoredTrack,
+} from "@/lib/storage";
+import type { Playlist, RepeatMode, Track } from "@/types/music";
+
+type Entry = { track: Track; stored: StoredTrack };
+
+function toEntry(stored: StoredTrack): Entry {
+  const { file, art, addedAt: _addedAt, ...rest } = stored;
+  void _addedAt;
+  return {
+    stored,
+    track: { ...rest, url: URL.createObjectURL(file), artUrl: art ? URL.createObjectURL(art) : null },
+  };
+}
+
+function freeEntry({ track }: Entry) {
+  URL.revokeObjectURL(track.url);
+  if (track.artUrl) URL.revokeObjectURL(track.artUrl);
+}
 
 type PlayerState = {
   tracks: Track[];
+  playlists: Playlist[];
+  ready: boolean;
   current: Track | null;
   playing: boolean;
   time: number;
@@ -25,7 +51,13 @@ type PlayerState = {
   error: string | null;
   addFiles: (files: File[]) => Promise<void>;
   removeTrack: (id: string) => void;
-  play: (id: string) => void;
+  play: (id: string, context?: string[]) => void;
+  toggleFavorite: (id: string) => void;
+  createPlaylist: (name: string, trackId?: string) => string;
+  renamePlaylist: (id: string, name: string) => void;
+  deletePlaylist: (id: string) => void;
+  addToPlaylist: (playlistId: string, trackId: string) => void;
+  removeFromPlaylist: (playlistId: string, trackId: string) => void;
   toggle: () => void;
   next: () => void;
   previous: () => void;
@@ -47,7 +79,11 @@ export function usePlayer(): PlayerState {
 // state survive navigation between pages.
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [tracks, setTracks] = useState<Track[]>([]);
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [queue, setQueue] = useState<string[] | null>(null);
+  const [ready, setReady] = useState(false);
+  const tracks = useMemo(() => entries.map((e) => e.track), [entries]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -63,13 +99,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 
   // Keep latest values reachable from audio event handlers.
-  const live = useRef({ tracks, currentId, shuffle, repeat });
+  const live = useRef({ entries, playlists, queue, currentId, shuffle, repeat });
   useEffect(() => {
-    live.current = { tracks, currentId, shuffle, repeat };
+    live.current = { entries, playlists, queue, currentId, shuffle, repeat };
   });
 
-  const startTrack = useCallback((id: string) => {
+  // Restore the saved library on first load.
+  useEffect(() => {
+    let cancelled = false;
+    loadLibrary()
+      .then((lib) => {
+        if (cancelled) return;
+        setEntries(lib.tracks.map(toEntry));
+        setPlaylists(lib.playlists);
+      })
+      .catch(() => setError("Couldn't open saved library; changes won't be kept."))
+      .finally(() => !cancelled && setReady(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const startTrack = useCallback((id: string, context?: string[]) => {
     setError(null);
+    setQueue(context ?? null);
     setCurrentId(id);
   }, []);
 
@@ -87,17 +140,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [current]);
 
   const pickNext = useCallback((direction: 1 | -1, auto: boolean): string | null => {
-    const { tracks, currentId, shuffle, repeat } = live.current;
-    if (tracks.length === 0) return null;
-    const index = tracks.findIndex((t) => t.id === currentId);
-    if (shuffle && tracks.length > 1) {
+    const { entries, queue, currentId, shuffle, repeat } = live.current;
+    const all = entries.map((e) => e.track.id);
+    const ids = queue ? queue.filter((id) => all.includes(id)) : all;
+    if (ids.length === 0) return null;
+    const index = ids.indexOf(currentId ?? "");
+    if (shuffle && ids.length > 1) {
       let i = index;
-      while (i === index) i = Math.floor(Math.random() * tracks.length);
-      return tracks[i].id;
+      while (i === index) i = Math.floor(Math.random() * ids.length);
+      return ids[i];
     }
     const target = index + direction;
-    if (target >= 0 && target < tracks.length) return tracks[target].id;
-    if (repeat === "all" || !auto) return tracks[(target + tracks.length) % tracks.length].id;
+    if (target >= 0 && target < ids.length) return ids[target];
+    if (repeat === "all" || !auto) return ids[(target + ids.length) % ids.length];
     return null;
   }, []);
 
@@ -120,8 +175,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio) return;
     if (!live.current.currentId) {
-      const first = live.current.tracks[0];
-      if (first) startTrack(first.id);
+      const first = live.current.entries[0];
+      if (first) startTrack(first.track.id);
       return;
     }
     if (audio.paused) audio.play().catch(() => setPlaying(false));
@@ -140,19 +195,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addFiles = useCallback(async (files: File[]) => {
-    const added = await filesToTracks(files);
-    if (added.length === 0) {
+    const audio = files.filter(isAudioFile);
+    if (audio.length === 0) {
       setError("No audio files found in that selection.");
       return;
     }
     setError(null);
-    setTracks((prev) => [...prev, ...added]);
+    const added: Entry[] = [];
+    for (const file of audio) {
+      const stored = await readTrack(file);
+      saveTrack(stored).catch(() => setError("Couldn't save to the library on this device."));
+      added.push(toEntry(stored));
+      setEntries((prev) => [...prev, added[added.length - 1]]);
+    }
   }, []);
 
   const removeTrack = useCallback((id: string) => {
-    const track = live.current.tracks.find((t) => t.id === id);
-    if (track) URL.revokeObjectURL(track.url);
-    setTracks((prev) => prev.filter((t) => t.id !== id));
+    const entry = live.current.entries.find((e) => e.track.id === id);
+    if (entry) freeEntry(entry);
+    deleteStoredTrack(id).catch(() => {});
+    setEntries((prev) => prev.filter((e) => e.track.id !== id));
+    for (const pl of live.current.playlists) {
+      if (pl.trackIds.includes(id)) {
+        const updated = { ...pl, trackIds: pl.trackIds.filter((t) => t !== id) };
+        savePlaylist(updated).catch(() => {});
+        setPlaylists((prev) => prev.map((p) => (p.id === pl.id ? updated : p)));
+      }
+    }
     if (live.current.currentId === id) {
       setCurrentId(null);
       setPlaying(false);
@@ -161,12 +230,75 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const toggleFavorite = useCallback((id: string) => {
+    setEntries((prev) =>
+      prev.map((e) => {
+        if (e.track.id !== id) return e;
+        const favorite = !e.track.favorite;
+        const stored = { ...e.stored, favorite };
+        saveTrack(stored).catch(() => {});
+        return { stored, track: { ...e.track, favorite } };
+      }),
+    );
+  }, []);
+
+  const updatePlaylist = useCallback((id: string, fn: (p: Playlist) => Playlist) => {
+    const pl = live.current.playlists.find((p) => p.id === id);
+    if (!pl) return;
+    const updated = fn(pl);
+    savePlaylist(updated).catch(() => {});
+    setPlaylists((prev) => prev.map((p) => (p.id === id ? updated : p)));
+    live.current.playlists = live.current.playlists.map((p) => (p.id === id ? updated : p));
+  }, []);
+
+  const createPlaylist = useCallback((name: string, trackId?: string) => {
+    const pl: Playlist = {
+      id: crypto.randomUUID(),
+      name: name.trim() || "Untitled playlist",
+      trackIds: trackId ? [trackId] : [],
+    };
+    savePlaylist(pl).catch(() => {});
+    setPlaylists((prev) => [...prev, pl]);
+    live.current.playlists = [...live.current.playlists, pl];
+    return pl.id;
+  }, []);
+
+  const renamePlaylist = useCallback(
+    (id: string, name: string) =>
+      updatePlaylist(id, (p) => ({ ...p, name: name.trim() || p.name })),
+    [updatePlaylist],
+  );
+
+  const deletePlaylist = useCallback((id: string) => {
+    deleteStoredPlaylist(id).catch(() => {});
+    setPlaylists((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  const addToPlaylist = useCallback(
+    (playlistId: string, trackId: string) =>
+      updatePlaylist(playlistId, (p) =>
+        p.trackIds.includes(trackId) ? p : { ...p, trackIds: [...p.trackIds, trackId] },
+      ),
+    [updatePlaylist],
+  );
+
+  const removeFromPlaylist = useCallback(
+    (playlistId: string, trackId: string) =>
+      updatePlaylist(playlistId, (p) => ({ ...p, trackIds: p.trackIds.filter((t) => t !== trackId) })),
+    [updatePlaylist],
+  );
+
   // Lock-screen / notification controls where supported.
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
     ms.metadata = current
-      ? new MediaMetadata({ title: current.title, artist: "Local file" })
+      ? new MediaMetadata({
+          title: current.title,
+          artist: current.artist,
+          album: current.album,
+          artwork: current.artUrl ? [{ src: current.artUrl }] : [],
+        })
       : null;
     ms.setActionHandler("play", toggle);
     ms.setActionHandler("pause", toggle);
@@ -193,6 +325,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const value: PlayerState = {
     tracks,
+    playlists,
+    ready,
     current,
     playing,
     time,
@@ -204,6 +338,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     addFiles,
     removeTrack,
     play: startTrack,
+    toggleFavorite,
+    createPlaylist,
+    renamePlaylist,
+    deletePlaylist,
+    addToPlaylist,
+    removeFromPlaylist,
     toggle,
     next,
     previous,
