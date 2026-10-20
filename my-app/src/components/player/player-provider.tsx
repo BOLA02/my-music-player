@@ -130,18 +130,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setCurrentId(id);
   }, []);
 
-  // Load and play whenever the current track changes.
+  // Load and play when the file changes. Keyed on the URL, not the track
+  // object, so editing metadata (e.g. toggling a favourite) never restarts it.
+  const currentUrl = current?.url ?? null;
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (!current) {
+    if (!currentUrl) {
       audio.removeAttribute("src");
       audio.load();
       return;
     }
-    audio.src = current.url;
+    audio.src = currentUrl;
     audio.play().catch(() => setPlaying(false));
-  }, [current]);
+  }, [currentUrl]);
 
   const pickNext = useCallback((direction: 1 | -1, auto: boolean): string | null => {
     const { entries, queue, currentId, shuffle, repeat } = live.current;
