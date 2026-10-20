@@ -60,6 +60,7 @@ type PlayerState = {
   deletePlaylist: (id: string) => void;
   addToPlaylist: (playlistId: string, trackId: string) => void;
   removeFromPlaylist: (playlistId: string, trackId: string) => void;
+  reorderPlaylist: (playlistId: string, fromTrackId: string, toTrackId: string) => void;
   toggle: () => void;
   next: () => void;
   previous: () => void;
@@ -285,6 +286,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [updatePlaylist],
   );
 
+  // Moves fromTrackId to the position currently held by toTrackId.
+  const reorderPlaylist = useCallback(
+    (playlistId: string, fromTrackId: string, toTrackId: string) =>
+      updatePlaylist(playlistId, (p) => {
+        const ids = [...p.trackIds];
+        const from = ids.indexOf(fromTrackId);
+        const to = ids.indexOf(toTrackId);
+        if (from < 0 || to < 0 || from === to) return p;
+        ids.splice(from, 1);
+        ids.splice(to, 0, fromTrackId);
+        return { ...p, trackIds: ids };
+      }),
+    [updatePlaylist],
+  );
+
   const removeFromPlaylist = useCallback(
     (playlistId: string, trackId: string) =>
       updatePlaylist(playlistId, (p) => ({ ...p, trackIds: p.trackIds.filter((t) => t !== trackId) })),
@@ -349,6 +365,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     deletePlaylist,
     addToPlaylist,
     removeFromPlaylist,
+    reorderPlaylist,
     toggle,
     next,
     previous,

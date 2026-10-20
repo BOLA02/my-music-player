@@ -10,7 +10,7 @@ import { TrackList } from "@/components/player/track-list";
 export default function PlaylistPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { playlists, tracks, ready, play, toggleShuffle, shuffle, renamePlaylist, deletePlaylist, removeFromPlaylist } =
+  const { playlists, tracks, ready, play, toggleShuffle, shuffle, renamePlaylist, deletePlaylist, removeFromPlaylist, reorderPlaylist } =
     usePlayer();
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -96,6 +96,7 @@ export default function PlaylistPage() {
       </div>
       <TrackList
         tracks={items}
+        onReorder={(from, to) => reorderPlaylist(playlist.id, items[from].id, items[to].id)}
         emptyText="Empty playlist. Use the add-to-playlist button on any song in your library."
         rowAction={(t) => (
           <button
