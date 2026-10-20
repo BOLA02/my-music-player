@@ -54,9 +54,10 @@ export function NowPlaying() {
           <span className="h-10 w-10" />
         </header>
 
-        <div className="grid flex-1 place-items-center py-4">
-          <div className="w-full max-w-[22rem] shadow-2xl shadow-black/60">
-            <Artwork url={current.artUrl} size={352} />
+        <div className="grid flex-1 place-items-center py-2">
+          {/* Capped by viewport height so the controls stay on screen on short phones. */}
+          <div className="shadow-2xl shadow-black/60">
+            <Artwork url={current.artUrl} size="min(22rem, 100%, 36dvh)" />
           </div>
         </div>
 

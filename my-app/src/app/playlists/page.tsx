@@ -18,14 +18,15 @@ export default function PlaylistsPage() {
         className="mb-6 flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!name.trim()) return;
-          router.push(`/playlists/${createPlaylist(name)}`);
+          // An empty name gets a default instead of silently doing nothing.
+          const fallback = `Playlist ${playlists.length + 1}`;
+          router.push(`/playlists/${createPlaylist(name.trim() || fallback)}`);
         }}
       >
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New playlist name"
+          placeholder="Playlist name (optional)"
           className="flex-1 rounded-full bg-zinc-900 px-4 py-2 text-sm outline-none placeholder:text-zinc-500"
         />
         <button className="flex items-center gap-2 rounded-full bg-emerald-400 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-300">
